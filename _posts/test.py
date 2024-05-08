@@ -4,16 +4,32 @@ import torch
 import torch.nn as nn
 from torch.optim import Adam
 
-class GRU(nn.Module):
-    def __init__(self, d_in, d_hid, n_layer, n_class):
-        super(GRU, self).__init__()
-        self.enc = nn.GRU(d_in, d_hid, n_layer, batch_first=True)
-        self.dec = nn.Linear(d_hid, n_class)
-    
-    def forward(self, x, h0):
-        hs, h = self.enc(x, h0)  # (bsz, seq_len, d_hid)
-        logits = self.dec(hs[:, -1, :])
-        return logits
+class TextCNN(nn.Module):
+    def __init__(self, vocab_size, n_class, d_emb, ch, seq_len, filter_sizes=[2,2,2]):
+        super(TextCNN, self).__init__()
+        d_hid = ch * len(filter_sizes)
+        self.emb = nn.Embedding(vocab_size, d_emb)
+        # [n_batch, 1, seq_len, d_emb] => [n_batch, ch, h, 1]
+        self.cnns = nn.ModuleList([nn.Conv2d(1, ch, (size, d_emb)) for size in filter_sizes])
+        # [n_batch, ch, h, 1] => [n_batch, ch, 1, 1]
+        self.pools = [nn.MaxPool2d((seq_len-size+1, 1)) for size in filter_sizes] # d_out = d_in // k
+        self.clf = nn.Linear(d_hid, n_class)
+
+    def forward(self, x):
+        n_batch, seq_len = x.shape
+        x = self.emb(x) # [n_batch, seq_len, d_emb]
+        x = x.unsqueeze(1) # [n_batch, 1, seq_len, d_emb]
+
+        z = []
+        for conv, pool in zip(self.cnns, self.pools):
+            h = F.relu(conv(x)) # [n_batch, ch, seq_len, 1]
+            h = pool(h) # [n_batch, ch, 1, 1]
+            z.append(h)
+
+        z = torch.cat(z, 1)
+        z = z.view(n_batch, -1)
+        z = self.clf(z)
+        return z
 
 if __name__ == "__main__":
     # config
